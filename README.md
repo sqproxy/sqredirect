@@ -20,6 +20,7 @@ Run `install.sh` and follow instructions on the screen
 ### DKMS
 
 Awesome answer about it: https://askubuntu.com/questions/408605/what-does-dkms-do-how-do-i-use-it
+
 Offical page with details: https://github.com/dell/dkms
 
 Prerequisites:
