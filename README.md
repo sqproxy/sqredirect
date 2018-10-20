@@ -1,4 +1,4 @@
-# source-query-cache-kernel-module
+# source-query-proxy-kernel-module
 
 
 ## Description
@@ -9,6 +9,13 @@ https://forums.alliedmods.net/showthread.php?t=297237
 ## Credits
 
 uthash: https://github.com/troydhanson/uthash
+
+## Requirements
+
+* Linux, or KVM virtualization (OVZ not allowed custom modules)
+* Kernel version >= 3.3 or 4.x (tested up to 4.18), check your by command: uname -r
+* linux headers: sudo apt-get install linux-headers-$(uname -r); or google "install linux headers" for your system
+* gcc and make
 
 ## Usage
 
