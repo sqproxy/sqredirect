@@ -56,7 +56,6 @@ HOOK(pre_hook)
 
 		if (
 			is_a2s_info_request(data, data_len)
-			|| is_inet_search_request(data, data_len)
 			|| is_a2s_players_request(data, data_len)
 			|| is_a2s_rules_request(data, data_len)
 		)
