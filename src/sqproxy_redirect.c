@@ -33,6 +33,14 @@ struct nf_hook_ops nf_pre_hook;  /* Incoming */
 struct nf_hook_ops nf_post_hook;  /* Outgoing */
 
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,13,0)
+    #define nf_register_hook(reg) nf_register_net_hook(&init_net, reg)
+    #define nf_unregister_hook(reg) nf_unregister_net_hook(&init_net, reg)
+#else
+    nf_register_hook(reg)
+#endif
+
+
 /* Initialisation routine */
 int init_module()
 {
