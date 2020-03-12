@@ -15,7 +15,7 @@ What is eBPF: https://en.wikipedia.org/wiki/Berkeley_Packet_Filter
 
 [More](./src-ebpf/README.md)
 
-## Kernel (outdated)
+## Kernel (deprecated)
 
 [More](./src/README.md) 
 
