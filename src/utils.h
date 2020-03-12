@@ -99,3 +99,75 @@ int is_steam_connect_ack(uint8_t* data, size_t len)
 
     return IS_STEAM_PACKET(packet) && (packet->header) == 0x6b;
 }
+
+
+// A2S_RESPONSES ATTACK
+
+
+int is_a2s_info_response(uint8_t* data, size_t len)
+{
+    static uint8_t payload[] = {0xFF, 0xFF, 0xFF, 0xFF, 0x49};
+    static size_t pl_len = sizeof(payload);
+
+    if (len < pl_len) {
+        return 0;
+    }
+
+    return memcmp(data, payload, pl_len) == 0;
+}
+
+
+int is_a2s_rules_response(uint8_t* data, size_t len)
+{
+    static uint8_t payload[] = {0xFF, 0xFF, 0xFF, 0xFF, 0x45};
+    static size_t pl_len = sizeof(payload);
+
+    if (len < pl_len)
+    {
+        return 0;
+    }
+
+    return memcmp(data, payload, pl_len) == 0;
+}
+
+
+int is_a2s_players_response(uint8_t* data, size_t len)
+{
+    static uint8_t payload[] = {0xFF, 0xFF, 0xFF, 0xFF, 0x44};
+    static size_t pl_len = sizeof(payload);
+
+    if (len < pl_len)
+    {
+        return 0;
+    }
+
+    return memcmp(data, payload, pl_len) == 0;
+}
+
+
+int is_csgo_unknown1_response(uint8_t* data, size_t len)
+{
+    static uint8_t payload[] = {0xFF, 0xFF, 0xFF, 0xFF, 0x6d};
+    static size_t pl_len = sizeof(payload);
+
+    if (len < pl_len)
+    {
+        return 0;
+    }
+
+    return memcmp(data, payload, pl_len) == 0;
+}
+
+
+int is_you_are_banned_response(uint8_t* data, size_t len)
+{
+    static uint8_t payload[] = {0xFF, 0xFF, 0xFF, 0xFF, 0x4c};
+    static size_t pl_len = sizeof(payload);
+
+    if (len < pl_len)
+    {
+        return 0;
+    }
+
+    return memcmp(data, payload, pl_len) == 0;
+}
