@@ -94,7 +94,7 @@ int outgoing(struct __sk_buff *skb) {
     if (value != 0) {
         u16 gameserver_port = *value;
 
-        incr_cksum_l4(&udp->crc, udp->sport, gameserver_port, 1);
+        incr_cksum_l4(&udp->crc, udp->sport, gameserver_port, 2);
         udp->sport = gameserver_port;
     }
 
