@@ -1,12 +1,5 @@
 # source-query-proxy-kernel-module
 
-
-## Description
-
-Redirection query (A2S) packets for Source Engine to proxy server and back
-
-https://forums.alliedmods.net/showthread.php?t=297237
-
 ## eBPF
 
 Modern and preferred way to redirect
