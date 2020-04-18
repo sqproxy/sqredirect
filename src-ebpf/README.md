@@ -3,7 +3,7 @@
 
 * Linux
 * Kernel version >= 4.4, check your by command: uname -r
-* bcc-tools >= 0.10.0
+* bcc-tools >= 0.10.0 (depends on Kernel version, see https://github.com/iovisor/bcc/releases)
     - [Install instruction](https://github.com/iovisor/bcc/blob/master/INSTALL.md)
 * python2 or python3 depends on bcc-tools installation case
 * pyroute2 >= 0.4
