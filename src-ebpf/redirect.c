@@ -31,6 +31,12 @@ int incoming(struct __sk_buff *skb) {
 
     struct udp_t *udp = cursor_advance(cursor, sizeof(*udp));
 
+    if (!udp->crc) {
+        // Attacker can miss checsum calculation
+        // for performance reasons
+        return TC_ACT_SHOT;
+    }
+
     u16 dport = udp->dport;
 
     u16 *value = gameserver2cache_port.lookup(&dport);
