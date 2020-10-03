@@ -161,7 +161,11 @@ class Ports(argparse.Action):
         raise argparse.ArgumentError(self, msg)
 
     def __call__(self, parser, namespace, values, option_string=None):
-        ports = {}
+        ports = getattr(namespace, self.dest, None)
+        if ports is None:
+            ports = {}
+            setattr(namespace, self.dest, ports)
+
         for value in values:
             mo = self._re_format.match(value)
             if mo is None:
@@ -195,8 +199,6 @@ class Ports(argparse.Action):
                 )
 
             ports[gport] = pport
-
-        setattr(namespace, self.dest, ports)
 
 
 if __name__ == '__main__':
