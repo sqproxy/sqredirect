@@ -6,12 +6,47 @@ import argparse
 import atexit
 import logging.config
 import re
+import sys
 import time
 import signal
 from bcc import BPF
 from ctypes import c_ushort
 from pyroute2 import IPRoute, protocols, IPDB
 from pyroute2.netlink.exceptions import NetlinkError
+
+PY2 = sys.version_info.major == 2
+
+try:
+    import ipaddress
+except ImportError:
+    assert PY2
+    print(
+        'ipaddress module not found. Please install it: %s -m pip install py2-ipaddress' % (sys.executable,),
+        file=sys.stderr,
+    )
+    exit(1)
+
+
+def _is_ipaddress_module_compatible():
+    """ipaddress module can be installed in system and have incompatible API
+
+    The common problem is can work only with `unicode` objects
+    """
+    try:
+        ipaddress.ip_address(str('0.0.0.0'))
+    except ipaddress.AddressValueError:
+        return False
+    return True
+
+
+if PY2 and not _is_ipaddress_module_compatible():
+    print(
+        'ipaddress module too old. Please update it: %s -m pip install -U py2-ipaddress' % (
+            sys.executable
+        ),
+        file=sys.stderr,
+    )
+    exit(1)
 
 
 logging.config.dictConfig({
@@ -48,13 +83,28 @@ ipr = IPRoute()
 log = logging.getLogger('main')
 
 
-def main(ports, interface=None):
+def main(ports, interface=None, ip_addrs=None):
     if interface is None:
         log.info('Interface not provided')
         interface = get_default_interface()
         log.info('Use interface for default route: %s', interface)
 
+    ipdb = IPDB()
     ifindex = ipr.link_lookup(ifname=interface)[0]
+    ifaddrs = [ipaddress.ip_address(addr) for addr, mask in ipdb.ipaddr[ifindex]]
+
+    if ip_addrs is not None:
+        unknown_ip_addresses = set(ip_addrs).difference(ifaddrs)
+        if unknown_ip_addresses:
+            raise RuntimeError(
+                "Can not setup filtering. Given IPs not assigned to given interface: "
+                "IPs={unknown_ip_addresses}, interface={interface}.\n"
+                "Note: available addresses is {ifaddrs}".format(
+                    unknown_ip_addresses=[str(x) for x in unknown_ip_addresses],
+                    interface=interface,
+                    ifaddrs=[str(x) for x in ifaddrs],
+                ),
+            )
 
     cflags = ["-include", "utils.h"]
 
@@ -74,13 +124,33 @@ def main(ports, interface=None):
 
     log.info('Attach eBPF program to interface ...')
     reg_cleanup(ifindex)
-    setup_incoming(fn_incoming, ifindex)
-    setup_outgoing(fn_outgoing, ifindex)
+    setup_incoming(fn_incoming, ifindex, ip_addrs)
+    setup_outgoing(fn_outgoing, ifindex, ip_addrs)
 
     log.info('Running ...')
     while True:
         time.sleep(1)
         bpf.trace_print()
+
+
+def _get_ip_key(network):
+    # type: (ipaddress.IPv4Network) -> str
+    hex_ip = hex(int(network.network_address))
+    hex_netmask = hex(int(network.netmask))
+
+    return hex_ip + '/' + hex_netmask
+
+
+def get_src_ip_key(network):
+    # type: (ipaddress.IPv4Network) -> str
+    # 12 = Source network field bit offset
+    return _get_ip_key(network) + '+12'
+
+
+def get_dst_ip_key(network):
+    # type: (ipaddress.IPv4Network) -> str
+    # 16 = Destination network field bit offset
+    return _get_ip_key(network) + '+16'
 
 
 def get_default_interface():
@@ -121,8 +191,13 @@ def reg_cleanup(ifindex):
     atexit.register(lambda: cleanup(ifindex, safe=True))
 
 
-def setup_incoming(fn, ifindex):
-    log.debug('Setup incoming hook (%s) (%s)', ifindex, fn.name)
+def setup_incoming(fn, ifindex, only_ips=None):
+    if only_ips is None:
+        keys = ['0x0/0x0+0']
+    else:
+        keys = [get_dst_ip_key(ipaddress.IPv4Network(x)) for x in only_ips]
+
+    log.debug('Setup incoming hook (%s) (%s), keys: %s', ifindex, fn.name, keys)
     try:
         ipr.tc("add", "ingress", ifindex, "ffff:")
     except NetlinkError as exc:
@@ -132,12 +207,17 @@ def setup_incoming(fn, ifindex):
     action = {"kind": "bpf", "fd": fn.fd, "name": fn.name, "action": "ok"}
     ipr.tc(
         "add-filter", "u32", ifindex, ":1", parent="ffff:", action=[action],
-        protocol=protocols.ETH_P_ALL, classid=1, target=0x10002, keys=['0x0/0x0+0']
+        protocol=protocols.ETH_P_ALL, classid=1, target=0x10002, keys=keys,
     )
 
 
-def setup_outgoing(fn, ifindex):
-    log.debug('Setup outgoing hook (%s) (%s)', ifindex, fn.name)
+def setup_outgoing(fn, ifindex, only_ips=None):
+    if only_ips is None:
+        keys = ['0x0/0x0+0']
+    else:
+        keys = [get_src_ip_key(ipaddress.IPv4Network(x)) for x in only_ips]
+
+    log.debug('Setup outgoing hook (%s) (%s), keys: %s', ifindex, fn.name, keys)
 
     try:
         ipr.tc("add", "sfq", ifindex, "1:")
@@ -149,7 +229,7 @@ def setup_outgoing(fn, ifindex):
 
     ipr.tc(
         "add-filter", "u32", ifindex, ":2", parent="1:", action=[action],
-        protocol=protocols.ETH_P_ALL, classid=1, target=0x10002, keys=['0x0/0x0+0']
+        protocol=protocols.ETH_P_ALL, classid=1, target=0x10002, keys=keys,
     )
 
 
@@ -208,6 +288,10 @@ if __name__ == '__main__':
         help='Interface name. If not provided will be used default.'
     )
     parser.add_argument(
+        '--ip-addr', default=None, metavar='192.168.0.2', type=ipaddress.IPv4Address, nargs='*',
+        help='IPv4 addr(s) to filter. Required if interface has many assigned IPs',
+    )
+    parser.add_argument(
         '-p', '--ports', metavar='27015:27915', type=str, nargs='*',
         action=Ports,
         required=True,
@@ -217,6 +301,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     try:
-        main(args.ports, args.interface)
+        main(args.ports, args.interface, args.ip_addr)
     except KeyboardInterrupt:
         pass
