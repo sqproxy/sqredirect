@@ -11,9 +11,21 @@
 #include <bcc/proto.h>
 #include <bcc/helpers.h>
 
+BPF_HASH(gameserver2proxy_port, u16, u16, 128);
+BPF_HASH(proxy2gameserver_port, u16, u16, 128);
 
-BPF_HASH(gameserver2cache_port, u16, u16, 128);
-BPF_HASH(cache2gameserver_port, u16, u16, 128);
+#pragma pack(push)
+#pragma pack(1)
+struct _addr_key {
+  u32 ip;
+  u16 port;
+};
+#pragma pack(pop)
+
+typedef struct _addr_key addr_key_t;
+
+BPF_HASH(addr_gameserver2proxy_port, addr_key_t, u16, 128);
+BPF_HASH(addr_proxy2gameserver_port, addr_key_t, u16, 128);
 
 
 int incoming(struct __sk_buff *skb) {
@@ -37,14 +49,21 @@ int incoming(struct __sk_buff *skb) {
         return TC_ACT_SHOT;
     }
 
+    u32 ip_dst = ip->dst;
     u16 dport = udp->dport;
 
-    u16 *value = gameserver2cache_port.lookup(&dport);
+    #ifndef USE_IPPORT_KEY
+        u16 *value = gameserver2proxy_port.lookup(&dport);
+    #else
+        addr_key_t addr = {.ip = ip_dst, .port = dport};
+        u16 *value = addr_gameserver2proxy_port.lookup(&addr);
+    #endif
+
     if (!value) {
         return TC_ACT_OK;
     }
 
-    u16 cache_port = *value;
+    u16 proxy_port = *value;
 
     u32 payload_offset = sizeof(*ethernet) + sizeof(*ip) + sizeof(*udp);
     u32 payload_length = ip->tlen - (sizeof(*ip) + sizeof(*udp));
@@ -65,8 +84,8 @@ int incoming(struct __sk_buff *skb) {
 
     if (IS_STEAM_PACKET(data)) {
         if (IS_QUERY_REQUEST_PACKET(data)) {
-            incr_cksum_l4(&udp->crc, udp->dport, cache_port, 1);
-            udp->dport = cache_port;
+            incr_cksum_l4(&udp->crc, udp->dport, proxy_port, 1);
+            udp->dport = proxy_port;
         }
         else if (IS_UNLEGIT_REQUEST_PACKET(data)) {
             // we receive unlegit responses on game port
@@ -94,9 +113,17 @@ int outgoing(struct __sk_buff *skb) {
     }
 
     struct udp_t *udp = cursor_advance(cursor, sizeof(*udp));
+
+    u32 ip_src = ip->src;
     u16 sport = udp->sport;
 
-    u16 *value = cache2gameserver_port.lookup(&sport);
+    #ifndef USE_IPPORT_KEY
+        u16 *value = proxy2gameserver_port.lookup(&sport);
+    #else
+        addr_key_t addr = {.ip = ip_src, .port = sport};
+        u16 *value = addr_proxy2gameserver_port.lookup(&addr);
+    #endif
+
     if (value != 0) {
         u16 gameserver_port = *value;
 

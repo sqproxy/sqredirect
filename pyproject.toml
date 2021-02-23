@@ -1,0 +1,27 @@
+[tool.poetry]
+name = "sqredirect"
+version = "1.2.0"
+description = ""
+readme = 'README.md'
+authors = ["spumer <spumer-tm@yandex.ru>"]
+
+[tool.poetry.dependencies]
+python = "^2.7 || ^3"
+pyroute2 = ">=0.4"
+py2-ipaddress = {version = "^3.4.2", python = "^2.7"}
+
+[tool.poetry.dev-dependencies]
+dephell = {version = "^0.8.3", python = ">=3.6"}
+pytest = {version = "^6.2.2", python = "^3"}
+
+[tool.poetry.scripts]
+sqredirect = "sqredirect.redirect:sqredirect"
+
+
+[tool.dephell.main]
+from = {format = "poetry", path = "pyproject.toml"}
+to = {format = "setuppy", path = "setup.py"}
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

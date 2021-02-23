@@ -4,13 +4,17 @@ from __future__ import print_function
 
 import argparse
 import atexit
+import contextlib
 import logging.config
+import os
 import re
 import sys
 import time
 import signal
 from bcc import BPF
-from ctypes import c_ushort
+from ctypes import c_uint16
+from ctypes import c_uint32
+from ctypes import Structure
 from pyroute2 import IPRoute, protocols, IPDB
 from pyroute2.netlink.exceptions import NetlinkError
 
@@ -48,6 +52,8 @@ if PY2 and not _is_ipaddress_module_compatible():
     )
     exit(1)
 
+ANY_IP = ipaddress.IPv4Address('0.0.0.0')
+
 
 logging.config.dictConfig({
     'version': 1,
@@ -77,24 +83,49 @@ logging.config.dictConfig({
     },
 })
 
-ipr = IPRoute()
+
+if sys.platform == 'darwin':
+    # FIXME: skip IPRoute initialization on macOS
+    ipr = object()
+else:
+    ipr = IPRoute()
 
 
 log = logging.getLogger('main')
 
 
-def main(ports, interface=None, ip_addrs=None):
+class AddrKey(Structure):
+    _fields_ = [
+        ('ip', c_uint32),
+        ('port', c_uint16),
+    ]
+
+
+@contextlib.contextmanager
+def chdir(dirname=None):
+    curdir = os.getcwd()
+    try:
+        if dirname is not None:
+            os.chdir(dirname)
+        yield
+    finally:
+        os.chdir(curdir)
+
+
+def main(all_ports, interface=None):
     if interface is None:
         log.info('Interface not provided')
         interface = get_default_interface()
         log.info('Use interface for default route: %s', interface)
+
+    ip_addrs = list(all_ports.keys())
 
     ipdb = IPDB()
     ifindex = ipr.link_lookup(ifname=interface)[0]
     ifaddrs = [ipaddress.ip_address(addr) for addr, mask in ipdb.ipaddr[ifindex]]
 
     if ip_addrs is not None:
-        unknown_ip_addresses = set(ip_addrs).difference(ifaddrs)
+        unknown_ip_addresses = set(ip_addrs).difference(ifaddrs + [ANY_IP])
         if unknown_ip_addresses:
             raise RuntimeError(
                 "Can not setup filtering. Given IPs not assigned to given interface: "
@@ -106,51 +137,51 @@ def main(ports, interface=None, ip_addrs=None):
                 ),
             )
 
+    use_ipport_key = True
+    if len(ip_addrs) == 1 and ip_addrs[0] == ANY_IP:
+        # user not specified IP, ignore it at filtering too
+        use_ipport_key = False
+
     cflags = ["-include", "utils.h"]
 
-    log.info('Building eBPF program ...')
-    bpf = BPF(src_file="redirect.c", cflags=cflags, debug=0)
+    if use_ipport_key:
+        cflags.append('-DUSE_IPPORT_KEY')
+
+    log.info('Building eBPF program ..., cflags=%s', cflags)
+    with chdir(os.path.dirname(__file__)):
+        bpf = BPF(src_file="redirect.c", cflags=cflags, debug=0)
+
     fn_incoming = bpf.load_func("incoming", BPF.SCHED_ACT)
     fn_outgoing = bpf.load_func("outgoing", BPF.SCHED_ACT)
 
-    cache2gameserver_port = bpf.get_table('cache2gameserver_port')
-    cache2gameserver_port.update((
-        (c_ushort(v), c_ushort(k)) for k, v in ports.items()
-    ))
-    gameserver2cache_port = bpf.get_table('gameserver2cache_port')
-    gameserver2cache_port.update((
-        (c_ushort(k), c_ushort(v)) for k, v in ports.items()
-    ))
+    if use_ipport_key:
+        addr_gameserver2proxy_port = bpf.get_table('addr_gameserver2proxy_port')
+        addr_proxy2gameserver_port = bpf.get_table('addr_proxy2gameserver_port')
+
+        for ip, ports in all_ports.items():
+            for game_port, proxy_port in ports.items():
+                addr_gameserver2proxy_port[AddrKey(ip, game_port)] = c_uint16(proxy_port)
+                addr_proxy2gameserver_port[AddrKey(ip, proxy_port)] = c_uint16(game_port)
+
+    else:
+        assert len(ip_addrs) == 1
+        ports = all_ports[ip_addrs[0]]
+
+        gameserver2proxy_port = bpf.get_table('gameserver2proxy_port')
+        proxy2gameserver_port = bpf.get_table('proxy2gameserver_port')
+
+        for game_port, proxy_port in ports.items():
+            gameserver2proxy_port[c_uint16(game_port)] = c_uint16(proxy_port)
+            proxy2gameserver_port[c_uint16(proxy_port)] = c_uint16(game_port)
 
     log.info('Attach eBPF program to interface ...')
     reg_cleanup(ifindex)
-    setup_incoming(fn_incoming, ifindex, ip_addrs)
-    setup_outgoing(fn_outgoing, ifindex, ip_addrs)
+    setup_incoming(fn_incoming, ifindex)
+    setup_outgoing(fn_outgoing, ifindex)
 
     log.info('Running ...')
     while True:
         time.sleep(1)
-        bpf.trace_print()
-
-
-def _get_ip_key(network):
-    # type: (ipaddress.IPv4Network) -> str
-    hex_ip = hex(int(network.network_address))
-    hex_netmask = hex(int(network.netmask))
-
-    return hex_ip + '/' + hex_netmask
-
-
-def get_src_ip_key(network):
-    # type: (ipaddress.IPv4Network) -> str
-    # 12 = Source network field bit offset
-    return _get_ip_key(network) + '+12'
-
-
-def get_dst_ip_key(network):
-    # type: (ipaddress.IPv4Network) -> str
-    # 16 = Destination network field bit offset
-    return _get_ip_key(network) + '+16'
 
 
 def get_default_interface():
@@ -191,13 +222,8 @@ def reg_cleanup(ifindex):
     atexit.register(lambda: cleanup(ifindex, safe=True))
 
 
-def setup_incoming(fn, ifindex, only_ips=None):
-    if only_ips is None:
-        keys = ['0x0/0x0+0']
-    else:
-        keys = [get_dst_ip_key(ipaddress.IPv4Network(x)) for x in only_ips]
-
-    log.debug('Setup incoming hook (%s) (%s), keys: %s', ifindex, fn.name, keys)
+def setup_incoming(fn, ifindex):
+    log.debug('Setup incoming hook (%s) (%s)', ifindex, fn.name)
     try:
         ipr.tc("add", "ingress", ifindex, "ffff:")
     except NetlinkError as exc:
@@ -207,17 +233,12 @@ def setup_incoming(fn, ifindex, only_ips=None):
     action = {"kind": "bpf", "fd": fn.fd, "name": fn.name, "action": "ok"}
     ipr.tc(
         "add-filter", "u32", ifindex, ":1", parent="ffff:", action=[action],
-        protocol=protocols.ETH_P_ALL, classid=1, target=0x10002, keys=keys,
+        protocol=protocols.ETH_P_ALL, classid=1, target=0x10002, keys=['0x0/0x0+0'],
     )
 
 
-def setup_outgoing(fn, ifindex, only_ips=None):
-    if only_ips is None:
-        keys = ['0x0/0x0+0']
-    else:
-        keys = [get_src_ip_key(ipaddress.IPv4Network(x)) for x in only_ips]
-
-    log.debug('Setup outgoing hook (%s) (%s), keys: %s', ifindex, fn.name, keys)
+def setup_outgoing(fn, ifindex):
+    log.debug('Setup outgoing hook (%s) (%s)', ifindex, fn.name)
 
     try:
         ipr.tc("add", "sfq", ifindex, "1:")
@@ -229,30 +250,51 @@ def setup_outgoing(fn, ifindex, only_ips=None):
 
     ipr.tc(
         "add-filter", "u32", ifindex, ":2", parent="1:", action=[action],
-        protocol=protocols.ETH_P_ALL, classid=1, target=0x10002, keys=keys,
+        protocol=protocols.ETH_P_ALL, classid=1, target=0x10002, keys=['0x0/0x0+0'],
     )
 
 
 class Ports(argparse.Action):
-    _re_format = re.compile(r'(\d+):(\d+)')
+    _re_ip_rexp = r'\d+\.\d+\.\d+\.\d+'
+    _re_format = re.compile(
+        r'(?P<ip>{_re_ip_rexp})?:?'.format(_re_ip_rexp=_re_ip_rexp)
+        + r'(?P<game>\d+):(?P<proxy>\d+)'
+    )
 
     def error(self, msg, *args):
         msg %= args
         raise argparse.ArgumentError(self, msg)
 
     def __call__(self, parser, namespace, values, option_string=None):
-        ports = getattr(namespace, self.dest, None)
-        if ports is None:
-            ports = {}
-            setattr(namespace, self.dest, ports)
+        all_ports = getattr(namespace, self.dest, None)
+        if all_ports is None:
+            all_ports = {}
+            setattr(namespace, self.dest, all_ports)
+
+        if isinstance(values, (str, bytes)):
+            values = [values]
 
         for value in values:
             mo = self._re_format.match(value)
             if mo is None:
                 self.error("unknown format (%r), expected 'integer:integer' (e.g. '27015:27915')", value)
 
-            gport = int(mo.group(1))
-            pport = int(mo.group(2))
+            match = mo.groupdict()
+
+            ip_match = match.get('ip') or '0.0.0.0'
+            try:
+                ip = ipaddress.IPv4Address(ip_match)
+            except ipaddress.AddressValueError:
+                self.error("unknown ip format (%r), expected IPv4 format", ip_match)
+                ip = None  # unreachable code, just suppress code inspection warning
+
+            if ip not in all_ports:
+                all_ports[ip] = {}
+
+            ip_ports = all_ports[ip]
+
+            gport = int(match['game'])
+            pport = int(match['proxy'])
 
             if not (1 <= gport <= 65535):
                 self.error("invalid game port (%s): value should be between 1 and 65535", gport)
@@ -263,14 +305,14 @@ class Ports(argparse.Action):
             if gport == pport:
                 self.error("invalid port mapping (%r): ports can't be equal", value)
 
-            old_pport = ports.get(gport)
+            old_pport = ip_ports.get(gport)
             if old_pport and old_pport != pport:
                 self.error(
                     "game port (%s) already mentioned for different proxy port %s",
                     gport, old_pport,
                 )
 
-            old_gport = [k for k, v in ports.items() if v == pport]
+            old_gport = [k for k, v in ip_ports.items() if v == pport]
             if old_gport:
                 assert len(old_gport) == 1
                 self.error(
@@ -278,21 +320,17 @@ class Ports(argparse.Action):
                     pport, old_gport[0],
                 )
 
-            ports[gport] = pport
+            ip_ports[gport] = pport
 
 
-if __name__ == '__main__':
+def sqredirect():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         '-i', '--interface', default=None, type=str,
         help='Interface name. If not provided will be used default.'
     )
     parser.add_argument(
-        '--ip-addr', default=None, metavar='192.168.0.2', type=ipaddress.IPv4Address, nargs='*',
-        help='IPv4 addr(s) to filter. Required if interface has many assigned IPs',
-    )
-    parser.add_argument(
-        '-p', '--ports', metavar='27015:27915', type=str, nargs='*',
+        '-p', '--ports', metavar='27015:27915 or 192.168.0.1:27015:27915', type=str, nargs='*',
         action=Ports,
         required=True,
         help='GameServer:Proxy port to redirect queries'
@@ -301,6 +339,10 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     try:
-        main(args.ports, args.interface, args.ip_addr)
+        main(args.ports, args.interface)
     except KeyboardInterrupt:
         pass
+
+
+if __name__ == '__main__':
+    sqredirect()
