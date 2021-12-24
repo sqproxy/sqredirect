@@ -24,14 +24,13 @@ if os.path.exists(readme_path):
 setup(
     long_description=readme,
     name='sqredirect',
-    version='1.2.1',
+    version='1.2.2',
     python_requires='==3.*,>=3.6.0',
     author='spumer',
     author_email='spumer-tm@yandex.ru',
-    entry_points={"console_scripts": ["sqredirect = sqredirect.redirect:sqredirect"]},
+    entry_points={'console_scripts': ['sqredirect = sqredirect.redirect:sqredirect']},
     packages=['sqredirect'],
-    package_dir={"": "."},
-    package_data={"sqredirect": ["*.c", "*.h"]},
+    package_data={'sqredirect': ['*.c', '*.h']},
     install_requires=['py2-ipaddress==3.*,>=3.4.2; python_version == "2.*" and python_version >= "2.7.0"', 'pyroute2>=0.4'],
-    extras_require={"dev": ["bumpversion==0.*,>=0.6.0", "pytest==6.*,>=6.2.2"]},
+    extras_require={'dev': ['bumpversion==0.*,>=0.6.0', 'dephell==0.7.3', 'mistune<2.0.0', 'pytest==6.*,>=6.2.2']},
 )
