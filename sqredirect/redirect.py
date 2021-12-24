@@ -160,8 +160,8 @@ def main(all_ports, interface=None):
 
         for ip, ports in all_ports.items():
             for game_port, proxy_port in ports.items():
-                addr_gameserver2proxy_port[AddrKey(ip, game_port)] = c_uint16(proxy_port)
-                addr_proxy2gameserver_port[AddrKey(ip, proxy_port)] = c_uint16(game_port)
+                addr_gameserver2proxy_port[AddrKey(int(ip), game_port)] = c_uint16(proxy_port)
+                addr_proxy2gameserver_port[AddrKey(int(ip), proxy_port)] = c_uint16(game_port)
 
     else:
         assert len(ip_addrs) == 1
