@@ -4,7 +4,7 @@
 PYTHON_INSTALL := $(shell python3 -c 'import sys;print(sys.executable)')
 BIN ?= $(shell [ -e .venv/bin ] && echo `pwd`/'.venv/bin' || dirname $(PYTHON_INSTALL))/
 
-CODE = .
+CODE = sqredirect
 
 help:  ## This help dialog.
 	@IFS=$$'\n' ; \
@@ -27,18 +27,15 @@ init:
 	python3 -m venv .venv
 	poetry install
 
-test:   ## Tests
-	$(BIN)python -m pytest $(CODE) $(args)
-
-cov:   ## Tests (with coverage)
+test:   ## Запуск тестов
 	$(BIN)python -m pytest --cov=$(CODE) $(args)
 
-lint:  ## QA (linting)
+lint:  ## Проверка кода (linting)
 	$(BIN)flake8 --jobs 4 --statistics --show-source $(CODE) tests
 	$(BIN)black --target-version=py37 --skip-string-normalization --line-length=120 --check $(CODE) tests
 	#$(BIN)python -m pytest --dead-fixtures --dup-fixtures  # disabled due _old_style_conf_d_globals detected as unused
 
-pretty:  ## Autoformat respecting code-style
+pretty:  ## Автоформатирование согласно code-style
 	$(BIN)isort $(CODE) tests
 	$(BIN)black --target-version=py37 --skip-string-normalization --line-length=120 $(CODE) tests
 	$(BIN)unify --in-place --recursive $(CODE) tests
@@ -48,24 +45,24 @@ precommit_install:  ## Установка pre-commit хука с проверк�
 	echo "exec make lint test BIN=$(BIN)" >> .git/hooks/pre-commit
 	chmod +x .git/hooks/pre-commit
 
-bump_major:  ## Bump major version
+bump_major:
 	$(BIN)bumpversion major
-	dephell convert deps
+	$(BIN)python3 update_setup.py
 	git add setup.py
 	git commit --amend --no-edit
 
-bump_minor:  ## Bump minor version
+bump_minor:
 	$(BIN)bumpversion minor
-	dephell convert deps
+	$(BIN)python3 update_setup.py
 	git add setup.py
 	git commit --amend --no-edit
 
-bump_patch:  ## Bump patch version
+bump_patch:
 	$(BIN)bumpversion patch
-	dephell convert deps
+	$(BIN)python3 update_setup.py
 	git add setup.py
 	git commit --amend --no-edit
 
 
-publish:  ## Push to repo with tags
+publish:
 	git push origin master --tags
