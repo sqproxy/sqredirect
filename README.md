@@ -94,3 +94,9 @@ More about sudoers: https://www.digitalocean.com/community/tutorials/how-to-edit
     tc qdisc del dev eth0 root
 
 replace `eth0` with your interface name
+
+## Dive into Traffic Control
+
+eBPF provide simple way to control traffic. But it's based on great Linux architecture of Traffic Control (TC).
+
+More about TC you can learn in this document: https://people.netfilter.org/pablo/netdev0.1/papers/Linux-Traffic-Control-Classifier-Action-Subsystem-Architecture.pdf
