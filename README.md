@@ -11,6 +11,8 @@ eBPF is more efficient way to check/accept/drop packets in Linux
 
 [More in Wikipedia](https://en.wikipedia.org/wiki/Berkeley_Packet_Filter)
 
+[BPF Performance Tools (book)](https://www.brendangregg.com/bpf-performance-tools-book.html)
+
 ### Firewall
 
 As redirection and filtering processed before any firewall rules applied, you also need ensure target (redirect) ports are accessable from external network.
